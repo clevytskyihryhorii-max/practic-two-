@@ -1,0 +1,253 @@
+using System;
+using System.Drawing;
+using System.Net.Http;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using Newtonsoft.Json.Linq;
+
+namespace WeatherAndCurrencyApp
+{
+    public partial class Form1 : Form
+    {
+        private TextBox txtCity;
+        private Button btnGetWeather;
+        private Button btnGetCurrency;
+        private RichTextBox rtbResult;
+        private Label lblStatus;
+
+        public Form1()
+        {
+            InitializeComponent();
+            SetupUI();
+        }
+
+        private void SetupUI()
+        {
+            this.Text = "Погода (Закарпаття) та Курси валют (UAH)";
+            this.Size = new Size(500, 600);
+            this.StartPosition = FormStartPosition.CenterScreen;
+
+            Label lblCity = new Label()
+            {
+                Text = "Мiсто (Закарпаття):",
+                Location = new Point(20, 20),
+                Size = new Size(150, 25),
+                Font = new Font("Arial", 10, FontStyle.Bold)
+            };
+
+            txtCity = new TextBox()
+            {
+                Location = new Point(180, 20),
+                Size = new Size(200, 25),
+                Font = new Font("Arial", 10)
+            };
+            txtCity.Text = "Uzhhorod";
+
+            btnGetWeather = new Button()
+            {
+                Text = "Погода в Закарпаттi",
+                Location = new Point(20, 60),
+                Size = new Size(200, 40),
+                BackColor = Color.LightSkyBlue,
+                Font = new Font("Arial", 10)
+            };
+            btnGetWeather.Click += BtnGetWeather_Click;
+
+            btnGetCurrency = new Button()
+            {
+                Text = "Курси валют до UAH",
+                Location = new Point(240, 60),
+                Size = new Size(200, 40),
+                BackColor = Color.LightGreen,
+                Font = new Font("Arial", 10)
+            };
+            btnGetCurrency.Click += BtnGetCurrency_Click;
+
+            rtbResult = new RichTextBox()
+            {
+                Location = new Point(20, 120),
+                Size = new Size(440, 400),
+                Font = new Font("Consolas", 10),
+                ReadOnly = true,
+                BackColor = Color.WhiteSmoke
+            };
+
+            lblStatus = new Label()
+            {
+                Text = "Готово (без ключiв)",
+                Location = new Point(20, 530),
+                Size = new Size(440, 25),
+                ForeColor = Color.Gray
+            };
+
+            this.Controls.Add(lblCity);
+            this.Controls.Add(txtCity);
+            this.Controls.Add(btnGetWeather);
+            this.Controls.Add(btnGetCurrency);
+            this.Controls.Add(rtbResult);
+            this.Controls.Add(lblStatus);
+        }
+
+        private async void BtnGetWeather_Click(object sender, EventArgs e)
+        {
+            string city = txtCity.Text.Trim();
+            if (string.IsNullOrEmpty(city))
+            {
+                MessageBox.Show("Введiть назву мiста", "Помилка", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            btnGetWeather.Enabled = false;
+            lblStatus.Text = "Завантаження погоди...";
+            rtbResult.Clear();
+
+            string weatherInfo = await GetWeatherAsync(city);
+            rtbResult.Text = weatherInfo;
+
+            lblStatus.Text = "Готово";
+            btnGetWeather.Enabled = true;
+        }
+
+        private async void BtnGetCurrency_Click(object sender, EventArgs e)
+        {
+            btnGetCurrency.Enabled = false;
+            lblStatus.Text = "Завантаження курсiв валют...";
+            rtbResult.Clear();
+
+            string currencyInfo = await GetCurrencyRatesToUAHAsync();
+            rtbResult.Text = currencyInfo;
+
+            lblStatus.Text = "Готово";
+            btnGetCurrency.Enabled = true;
+        }
+
+        private async Task<string> GetWeatherAsync(string city)
+        {
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    string geoUrl = $"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1&language=uk&format=json";
+                    HttpResponseMessage geoResponse = await client.GetAsync(geoUrl);
+                    string geoJson = await geoResponse.Content.ReadAsStringAsync();
+                    JObject geoData = JObject.Parse(geoJson);
+
+                    if (geoData["results"] == null || !geoData["results"].HasValues)
+                    {
+                        return $"Мiсто '{city}' не знайдено.\n\nСпробуйте такi мiста Закарпаття:\n- Uzhhorod\n- Mukachevo\n- Berehove\n- Khust\n- Chop\n- Svalyava\n- Rakhiv";
+                    }
+
+                    double lat = (double)geoData["results"][0]["latitude"];
+                    double lon = (double)geoData["results"][0]["longitude"];
+                    string cityName = geoData["results"][0]["name"].ToString();
+                    string country = geoData["results"][0]["country"]?.ToString() ?? "";
+
+                    string weatherUrl = $"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true&temperature_unit=celsius&windspeed_unit=ms&timezone=auto";
+                    HttpResponseMessage weatherResponse = await client.GetAsync(weatherUrl);
+                    string weatherJson = await weatherResponse.Content.ReadAsStringAsync();
+                    JObject weatherData = JObject.Parse(weatherJson);
+
+                    double temp = (double)weatherData["current_weather"]["temperature"];
+                    double windSpeed = (double)weatherData["current_weather"]["windspeed"];
+                    int weatherCode = (int)weatherData["current_weather"]["weathercode"];
+
+                    string description = GetWeatherDescription(weatherCode);
+
+                    return $"ПОГОДА В ЗАКАРПАТТI\n" +
+                           $"================================\n" +
+                           $"Мiсто: {cityName}\n" +
+                           $"Країна: {country}\n" +
+                           $"{description}\n" +
+                           $"Температура: {temp}°C\n" +
+                           $"Вiтер: {windSpeed} м/с\n" +
+                           $"================================\n" +
+                           $"Закарпаття — край легенд та квiтучих садiв!\n" +
+                           $"{DateTime.Now:dd.MM.yyyy HH:mm}";
+                }
+            }
+            catch (Exception ex)
+            {
+                return $"Помилка: {ex.Message}\n\nПеревiрте пiдключення до iнтернету.";
+            }
+        }
+
+        private string GetWeatherDescription(int code)
+        {
+            switch (code)
+            {
+                case 0: return "Ясне небо";
+                case 1: return "Переважно ясно";
+                case 2: return "Мiнлива хмарнiсть";
+                case 3: return "Похмуро";
+                case 45: return "Туман";
+                case 48: return "Туман з памороззю";
+                case 51: return "Легка морось";
+                case 53: return "Морось";
+                case 55: return "Сильна морось";
+                case 56: return "Льодяна морось";
+                case 57: return "Сильна льодяна морось";
+                case 61: return "Невеликий дощ";
+                case 63: return "Дощ";
+                case 65: return "Сильний дощ";
+                case 66: return "Льодяний дощ";
+                case 67: return "Сильний льодяний дощ";
+                case 71: return "Невеликий снiг";
+                case 73: return "Снiг";
+                case 75: return "Сильний снiг";
+                case 77: return "Снiгова крупа";
+                case 80: return "Невелика злива";
+                case 81: return "Злива";
+                case 82: return "Сильна злива";
+                case 85: return "Невеликий снiгопад";
+                case 86: return "Сильний снiгопад";
+                case 95: return "Гроза";
+                case 96: return "Гроза з градом";
+                case 99: return "Сильна гроза з градом";
+                default: return "Iнша погода";
+            }
+        }
+
+        private async Task<string> GetCurrencyRatesToUAHAsync()
+        {
+            try
+            {
+                using (HttpClient client = new HttpClient())
+                {
+                    string url = "https://api.exchangerate-api.com/v4/latest/UAH";
+                    HttpResponseMessage response = await client.GetAsync(url);
+
+                    if (!response.IsSuccessStatusCode)
+                        return $"Помилка отримання курсiв валют: {response.StatusCode}";
+
+                    string json = await response.Content.ReadAsStringAsync();
+                    JObject data = JObject.Parse(json);
+
+                    double usdRate = (double)data["rates"]["USD"];
+                    double eurRate = (double)data["rates"]["EUR"];
+                    double plnRate = (double)data["rates"]["PLN"];
+                    double gbpRate = (double)data["rates"]["GBP"];
+
+                    double uahPerUsd = 1 / usdRate;
+                    double uahPerEur = 1 / eurRate;
+                    double uahPerPln = 1 / plnRate;
+                    double uahPerGbp = 1 / gbpRate;
+
+                    return $"КУРСИ ВАЛЮТ ДО ГРИВНI (UAH)\n" +
+                           $"================================\n" +
+                           $"1 USD = {uahPerUsd:F2} UAH\n" +
+                           $"1 EUR = {uahPerEur:F2} UAH\n" +
+                           $"1 PLN = {uahPerPln:F2} UAH\n" +
+                           $"1 GBP = {uahPerGbp:F2} UAH\n" +
+                           $"================================\n" +
+                           $"{DateTime.Now:dd.MM.yyyy HH:mm}\n" +
+                           $"Джерело: exchangerate-api.com\n" +
+                           $"Слава Українi!";
+                }
+            }
+            catch (Exception ex)
+            {
+                return $"Помилка: {ex.Message}\n\nПеревiрте пiдключення до iнтернету.";
+            }
+        }
+    }
+}
